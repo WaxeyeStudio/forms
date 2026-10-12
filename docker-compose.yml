@@ -1,0 +1,63 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - espocrm
+    restart: unless-stopped
+
+  espocrm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ESPOCRM_DB_HOST: db
+      ESPOCRM_DB_NAME: espocrm
+      ESPOCRM_DB_USER: espocrm
+      ESPOCRM_DB_PASSWORD: ${DB_PASSWORD}
+      ESPOCRM_SITE_URL: https://forms.waxeye.co.nz
+    volumes:
+      - espocrm_data:/var/www/html
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: mariadb:10.11
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: espocrm
+      MYSQL_USER: espocrm
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backup:
+    image: offen/docker-volume-backup:latest
+    environment:
+      BACKUP_CRON_EXPRESSION: "0 2 * * *"
+      BACKUP_RETENTION_DAYS: "30"
+      BACKUP_FILENAME: "espocrm-backup-%Y-%m-%dT%H-%M-%S.tar.gz"
+    volumes:
+      - espocrm_data:/backup/espocrm:ro
+      - db_data:/backup/db:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+volumes:
+  espocrm_data:
+  db_data:
+  caddy_data:
+  caddy_config:

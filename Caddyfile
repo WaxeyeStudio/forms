@@ -1,0 +1,8 @@
+:80 {
+    handle /api/* {
+        reverse_proxy espocrm:80
+    }
+    handle {
+        reverse_proxy espocrm:80
+    }
+}
