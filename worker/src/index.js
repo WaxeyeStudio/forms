@@ -5,22 +5,34 @@
  *
  *   POST https://forms.waxeye.co.nz/f/{client-slug}
  *
- * The worker validates the submission and creates a record in EspoCRM via its
- * REST API (the API key is held as a Worker secret). Every other request on
- * forms.waxeye.co.nz — the EspoCRM UI and EspoCRM's own /api/v1 — passes
- * straight through to the origin (Laravel Forge → Docker).
+ * Client slugs are configured in `clients.json` and synced to the
+ * FORMS_CONFIG KV namespace by deploy.sh. Unknown slugs are rejected with 404,
+ * so a client must be onboarded before their forms work.
  *
- * Configuration (plain-text vars via wrangler.toml / deploy.sh, secrets via
- * `wrangler secret put` or the Cloudflare API):
+ * Each accepted submission is written to EspoCRM through its REST API (the API
+ * key is held as a Worker secret). Every other request on the hostname — the
+ * EspoCRM UI and EspoCRM's own /api/v1 — passes straight through to the origin
+ * (Laravel Forge → Docker).
  *
- *   ESPOCRM_API_URL       e.g. https://forms.waxeye.co.nz/api/v1   (plain text)
- *   ESPOCRM_ENTITY        entity to create, default "Lead"          (plain text)
- *   ALLOWED_ORIGINS       comma-separated list, or "*" for any      (plain text)
- *   ESPOCRM_SOURCE        value for the Lead source field           (plain text)
- *   ESPOCRM_CLIENT_FIELD  optional custom field for the client slug (plain text)
- *   ESPOCRM_API_KEY       EspoCRM API user key                      (secret)
- *   WORKER_API_SECRET     shared secret for server callers          (secret)
- *   REQUIRE_SECRET        "true" to require X-Worker-Secret always  (plain text)
+ * Configuration:
+ *
+ *   FORMS_CONFIG (KV)     client config, key `client:{slug}`:
+ *                         {
+ *                           "enabled": true,                        // default true
+ *                           "origins": ["https://client.co.nz"],    // optional; falls back to ALLOWED_ORIGINS
+ *                           "entity": "Lead",                       // optional; falls back to ESPOCRM_ENTITY
+ *                           "source": "Web Site"                    // optional; falls back to ESPOCRM_SOURCE
+ *                         }
+ *   RATE_LIMITER          per (client, IP) limiter, 10 requests / 60 s
+ *   ESPOCRM_API_URL       e.g. https://forms.waxeye.co.nz/api/v1
+ *   ESPOCRM_ENTITY        fallback entity, default "Lead"
+ *   ESPOCRM_SOURCE        fallback source value, default "Web Site"
+ *   ALLOWED_ORIGINS       fallback origin allowlist for clients without
+ *                         `origins`; comma-separated or "*" (default "*")
+ *   ESPOCRM_CLIENT_FIELD  optional custom field receiving the client slug
+ *   ESPOCRM_API_KEY       (secret) EspoCRM API user key
+ *   WORKER_API_SECRET     (secret) optional shared secret for server callers
+ *   REQUIRE_SECRET        "true" requires X-Worker-Secret on every request
  */
 
 const CLIENT_PATH = /^\/f\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\/?$/;
@@ -28,6 +40,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_MESSAGE_CHARS = 5000;
 const MAX_EXTRA_CHARS = 2000;
+const CONFIG_CACHE_TTL = 60;
 
 const HONEYPOT_FIELDS = ['_gotcha', 'company_website', 'address2', 'honeypot'];
 
@@ -44,49 +57,95 @@ const MAPPED_FIELDS = new Set([
   ...HONEYPOT_FIELDS,
 ]);
 
+/**
+ * @typedef {Object} Env
+ * @property {string} [ESPOCRM_API_URL]
+ * @property {string} [ESPOCRM_ENTITY]
+ * @property {string} [ESPOCRM_SOURCE]
+ * @property {string} [ESPOCRM_CLIENT_FIELD]
+ * @property {string} [ALLOWED_ORIGINS]
+ * @property {string} [WORKER_API_SECRET]
+ * @property {string} [REQUIRE_SECRET]
+ * @property {KVNamespace} [FORMS_CONFIG]
+ * @property {{ limit: (options: { key: string }) => Promise<{ success: boolean }> }} [RATE_LIMITER]
+ */
+
+/**
+ * @typedef {Object} ClientConfig
+ * @property {boolean} enabled
+ * @property {string[]} origins   Normalised origins; empty means "use fallback"
+ * @property {string} entity      Empty means "use fallback"
+ * @property {string} source      Empty means "use fallback"
+ */
+
 export default {
   /**
    * @param {Request} request
-   * @param {Record<string, string | undefined>} env
+   * @param {Env} env
    * @param {ExecutionContext} _ctx
    * @returns {Promise<Response>}
    */
   async fetch(request, env, _ctx) {
     const url = new URL(request.url);
     const match = url.pathname.match(CLIENT_PATH);
-    const cors = corsHeaders(env, request);
 
     if (!match) {
-      return json(404, { ok: false, error: 'not_found' }, cors);
+      return json(404, { ok: false, error: 'not_found' });
     }
+
+    if (request.method !== 'GET' && request.method !== 'POST' && request.method !== 'OPTIONS') {
+      return json(405, { ok: false, error: 'method_not_allowed' }, { Allow: 'GET, POST, OPTIONS' });
+    }
+
+    const client = match[1];
+
+    const loaded = await loadClient(env, client);
+    if (loaded.error) return loaded.error;
+    const cfg = loaded.cfg;
+    const origins = resolveOrigins(env, cfg);
+    const cors = corsHeaders(origins, request);
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: cors });
     }
 
     if (request.method === 'GET') {
-      return json(200, { ok: true, service: 'waxeye-forms', client: match[1] }, cors);
+      return json(200, { ok: true, service: 'waxeye-forms', client, enabled: cfg.enabled }, cors);
     }
 
-    if (request.method !== 'POST') {
-      return json(405, { ok: false, error: 'method_not_allowed' }, { ...cors, Allow: 'GET, POST, OPTIONS' });
+    if (!cfg.enabled) {
+      console.log(`[${client}] rejected: client disabled`);
+      return json(403, { ok: false, error: 'client_disabled' }, cors);
     }
 
-    const client = match[1];
-
-    if (!originAllowed(env, request)) {
+    if (!originAllowed(origins, request)) {
       return json(403, { ok: false, error: 'origin_not_allowed' }, cors);
     }
 
     const providedSecret = request.headers.get('X-Worker-Secret') || '';
     const secret = env.WORKER_API_SECRET || '';
+    const secretOk = Boolean(secret && providedSecret && timingSafeEqual(providedSecret, secret));
 
-    if (secret && providedSecret && !timingSafeEqual(providedSecret, secret)) {
+    if (secret && providedSecret && !secretOk) {
       return json(401, { ok: false, error: 'invalid_secret' }, cors);
     }
 
-    if (isTrue(env.REQUIRE_SECRET) && (!secret || !timingSafeEqual(providedSecret, secret))) {
+    if (isTrue(env.REQUIRE_SECRET) && !secretOk) {
       return json(401, { ok: false, error: 'unauthorized' }, cors);
+    }
+
+    // Trusted callers (correct shared secret) skip the public rate limit.
+    if (!secretOk && env.RATE_LIMITER) {
+      const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+      try {
+        const { success } = await env.RATE_LIMITER.limit({ key: `${client}:${ip}` });
+        if (!success) {
+          console.log(`[${client}] rate limited ${ip}`);
+          return json(429, { ok: false, error: 'rate_limited' }, cors);
+        }
+      } catch (error) {
+        console.error('rate limiter failed:', error instanceof Error ? error.message : error);
+      }
     }
 
     const declaredLength = Number(request.headers.get('Content-Length') || 0);
@@ -134,8 +193,8 @@ export default {
       return json(503, { ok: false, error: 'service_not_configured' }, cors);
     }
 
-    const entity = str(env.ESPOCRM_ENTITY) || 'Lead';
-    const payload = mapToEspo(env, client, data, request);
+    const entity = cfg.entity || str(env.ESPOCRM_ENTITY) || 'Lead';
+    const payload = mapToEspo(env, cfg, client, data, request);
 
     /** @type {Response} */
     let upstream;
@@ -173,15 +232,85 @@ export default {
 };
 
 /**
+ * Load and normalise a client's config from KV.
+ *
+ * @param {Env} env
+ * @param {string} client
+ * @returns {Promise<{ cfg: ClientConfig } | { error: Response }>}
+ */
+async function loadClient(env, client) {
+  if (!env.FORMS_CONFIG) {
+    console.error('FORMS_CONFIG KV binding is missing; refusing to process submissions');
+    return { error: json(503, { ok: false, error: 'service_not_configured' }) };
+  }
+
+  /** @type {unknown} */
+  let value;
+  try {
+    value = await env.FORMS_CONFIG.get(`client:${client}`, { type: 'json', cacheTtl: CONFIG_CACHE_TTL });
+  } catch (error) {
+    console.error(`KV read failed for client "${client}":`, error instanceof Error ? error.message : error);
+    return { error: json(503, { ok: false, error: 'service_unavailable' }) };
+  }
+
+  if (value === null || value === undefined) {
+    return { error: json(404, { ok: false, error: 'unknown_client' }) };
+  }
+
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    console.error(`Invalid config for client "${client}" (expected a JSON object)`);
+    return { error: json(503, { ok: false, error: 'service_unavailable' }) };
+  }
+
+  return { cfg: normalizeConfig(/** @type {Record<string, unknown>} */ (value)) };
+}
+
+/**
+ * @param {Record<string, unknown>} raw
+ * @returns {ClientConfig}
+ */
+function normalizeConfig(raw) {
+  /** @type {string[]} */
+  let origins = [];
+  if (Array.isArray(raw.origins)) {
+    origins = raw.origins
+      .filter((item) => typeof item === 'string' && item.trim())
+      .map((item) => normalizeOrigin(item));
+  }
+
+  return {
+    enabled: raw.enabled !== false,
+    origins,
+    entity: str(raw.entity),
+    source: str(raw.source),
+  };
+}
+
+/**
+ * The origins to enforce for this client: their own allowlist, or the global
+ * fallback (which defaults to "*").
+ *
+ * @param {Env} env
+ * @param {ClientConfig} cfg
+ * @returns {string[]}
+ */
+function resolveOrigins(env, cfg) {
+  if (cfg.origins.length > 0) return cfg.origins;
+  const fallback = parseList(env.ALLOWED_ORIGINS).map(normalizeOrigin);
+  return fallback.length > 0 ? fallback : ['*'];
+}
+
+/**
  * Map a submission onto an EspoCRM payload.
  *
- * @param {Record<string, string | undefined>} env
+ * @param {Env} env
+ * @param {ClientConfig} cfg
  * @param {string} client
  * @param {Record<string, unknown>} data
  * @param {Request} request
  * @returns {Record<string, string>}
  */
-function mapToEspo(env, client, data, request) {
+function mapToEspo(env, cfg, client, data, request) {
   const payload = { ...nameFields(data) };
 
   const email = str(data.email ?? data.email_address ?? data.emailAddress);
@@ -195,7 +324,7 @@ function mapToEspo(env, client, data, request) {
 
   payload.description = buildDescription(client, data, request);
 
-  const source = env.ESPOCRM_SOURCE ?? 'Web Site';
+  const source = cfg.source || str(env.ESPOCRM_SOURCE) || 'Web Site';
   if (source) payload.source = source;
 
   const clientField = str(env.ESPOCRM_CLIENT_FIELD);
@@ -314,24 +443,24 @@ async function parseSubmission(request) {
 }
 
 /**
- * CORS headers for the response. With ALLOWED_ORIGINS="*" (the default) any
- * origin is allowed; otherwise the request's Origin is echoed when allowed.
+ * CORS headers for the response. When the allowed list contains "*" any origin
+ * is allowed; otherwise the request's Origin is echoed back when it matches.
  *
- * @param {Record<string, string | undefined>} env
+ * @param {string[]} origins
  * @param {Request} request
  * @returns {Record<string, string>}
  */
-function corsHeaders(env, request) {
-  const allowed = parseList(env.ALLOWED_ORIGINS);
+function corsHeaders(origins, request) {
   const origin = request.headers.get('Origin') || '';
+  const normalized = normalizeOrigin(origin);
 
   /** @type {Record<string, string>} */
   const headers = {};
   let allow = '';
 
-  if (allowed.length === 0 || allowed.includes('*')) {
+  if (origins.includes('*')) {
     allow = '*';
-  } else if (origin && allowed.includes(origin)) {
+  } else if (normalized && origins.includes(normalized)) {
     allow = origin;
   }
 
@@ -347,22 +476,27 @@ function corsHeaders(env, request) {
 }
 
 /**
- * Whether the request origin is allowed to submit. Requests without an Origin
- * header (server-to-server, curl) are always allowed; browser enforcement and
- * the 403 below both apply when an allowlist is configured.
+ * Whether the request's origin is allowed. Requests without an Origin header
+ * (server-to-server, curl) are always allowed; browser enforcement and the 403
+ * in the fetch handler both apply when an allowlist is configured.
  *
- * @param {Record<string, string | undefined>} env
+ * @param {string[]} origins
  * @param {Request} request
  * @returns {boolean}
  */
-function originAllowed(env, request) {
-  const allowed = parseList(env.ALLOWED_ORIGINS);
-  if (allowed.length === 0 || allowed.includes('*')) return true;
-
+function originAllowed(origins, request) {
+  if (origins.includes('*')) return true;
   const origin = request.headers.get('Origin');
   if (!origin) return true;
+  return origins.includes(normalizeOrigin(origin));
+}
 
-  return allowed.includes(origin);
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function normalizeOrigin(value) {
+  return String(value).trim().replace(/\/+$/, '').toLowerCase();
 }
 
 /**

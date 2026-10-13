@@ -1,0 +1,6 @@
+{
+  "testclient": {
+    "origins": ["*"],
+    "enabled": true
+  }
+}

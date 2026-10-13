@@ -9,11 +9,25 @@ routes = [
     { pattern = "forms.waxeye.co.nz/f/*", zone_name = "waxeye.co.nz" }
 ]
 
+# Client config: key `client:{slug}` -> { enabled, origins, entity, source }.
+# Managed by deploy.sh (synced from clients.json). Replace the id with the
+# `waxeye-forms-config` namespace id — deploy.sh prints it as "namespace id: ...".
+[[kv_namespaces]]
+binding = "FORMS_CONFIG"
+id = "TO_BE_FILLED_FROM_DEPLOY_OUTPUT"
+
+# Per (client, IP) rate limiting: 10 requests / 60 seconds.
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
+
 [vars]
 ESPOCRM_API_URL = "https://forms.waxeye.co.nz/api/v1"
 ESPOCRM_ENTITY = "Lead"
 ESPOCRM_SOURCE = "Web Site"
-# Comma-separated origin allowlist, or "*" to accept form posts from any site.
+# Fallback origin allowlist for clients whose config omits `origins`.
 ALLOWED_ORIGINS = "*"
 # ESPOCRM_CLIENT_FIELD = "cClient"  # optional custom EspoCRM field for the client slug
 # REQUIRE_SECRET = "false"          # "true" requires X-Worker-Secret on every request
