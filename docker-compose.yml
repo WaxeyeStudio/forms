@@ -1,6 +1,6 @@
 services:
   caddy:
-    image: caddy:2-alpine
+    image: docker.io/library/caddy:2-alpine
     ports:
       - "8080:80"
     volumes:
@@ -16,20 +16,25 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      ESPOCRM_DB_HOST: db
-      ESPOCRM_DB_NAME: espocrm
-      ESPOCRM_DB_USER: espocrm
-      ESPOCRM_DB_PASSWORD: ${DB_PASSWORD}
-      ESPOCRM_SITE_URL: https://forms.waxeye.co.nz
+      ESPOCRM_DATABASE_HOST: db
+      ESPOCRM_DATABASE_PORT: "3306"
+      ESPOCRM_DATABASE_NAME: espocrm
+      ESPOCRM_DATABASE_USER: espocrm
+      ESPOCRM_DATABASE_PASSWORD: ${DB_PASSWORD}
+      ESPOCRM_SITE_URL: ${ESPOCRM_SITE_URL}
+      ESPOCRM_ADMIN_USERNAME: ${ESPOCRM_ADMIN_USERNAME:-admin}
+      ESPOCRM_ADMIN_PASSWORD: ${ESPOCRM_ADMIN_PASSWORD:?set ESPOCRM_ADMIN_PASSWORD in .env}
     volumes:
-      - espocrm_data:/var/www/html
+      - espocrm_custom:/var/www/html/custom
+      - espocrm_data:/var/www/html/data
+      - espocrm_client_custom:/var/www/html/client/custom
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
 
   db:
-    image: mariadb:10.11
+    image: docker.io/library/mariadb:10.11
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       MYSQL_DATABASE: espocrm
@@ -45,19 +50,23 @@ services:
     restart: unless-stopped
 
   backup:
-    image: offen/docker-volume-backup:latest
+    image: docker.io/offen/docker-volume-backup:latest
     environment:
       BACKUP_CRON_EXPRESSION: "0 2 * * *"
       BACKUP_RETENTION_DAYS: "30"
       BACKUP_FILENAME: "espocrm-backup-%Y-%m-%dT%H-%M-%S.tar.gz"
     volumes:
-      - espocrm_data:/backup/espocrm:ro
+      - espocrm_custom:/backup/espocrm_custom:ro
+      - espocrm_data:/backup/espocrm_data:ro
+      - espocrm_client_custom:/backup/espocrm_client_custom:ro
       - db_data:/backup/db:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
 
 volumes:
+  espocrm_custom:
   espocrm_data:
+  espocrm_client_custom:
   db_data:
   caddy_data:
   caddy_config:
