@@ -14,7 +14,7 @@ routes = [
 # `waxeye-forms-config` namespace id — deploy.sh prints it as "namespace id: ...".
 [[kv_namespaces]]
 binding = "FORMS_CONFIG"
-id = "TO_BE_FILLED_FROM_DEPLOY_OUTPUT"
+id = "3b3275f90d734c74815a5648aa6179d4"
 
 # Per (client, IP) rate limiting: 10 requests / 60 seconds.
 [[unsafe.bindings]]
