@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Waxeye Forms — example</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; padding: 0 1rem; }
+    label { display: block; margin: 1rem 0 .25rem; font-weight: 600; }
+    input, textarea { width: 100%; padding: .5rem; box-sizing: border-box; }
+    button { margin-top: 1rem; padding: .6rem 1.2rem; }
+    .honeypot { position: absolute; left: -9999px; }
+    #status { margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Contact us</h1>
+
+  <!--
+    Example client form. Replace CLIENT_SLUG with the client's slug so the
+    endpoint is https://forms.waxeye.co.nz/f/CLIENT_SLUG.
+  -->
+  <form id="waxeye-form">
+    <label for="name">Name</label>
+    <input id="name" name="name" type="text" required>
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required>
+
+    <label for="phone">Phone</label>
+    <input id="phone" name="phone" type="tel">
+
+    <label for="message">Message</label>
+    <textarea id="message" name="message" rows="5"></textarea>
+
+    <!-- Honeypot: hidden from people, tempting to bots. Do not remove. -->
+    <div class="honeypot" aria-hidden="true">
+      <label for="company_website">Company website</label>
+      <input id="company_website" name="company_website" type="text" tabindex="-1" autocomplete="off">
+    </div>
+
+    <button type="submit">Send</button>
+    <p id="status" role="status"></p>
+  </form>
+
+  <script>
+    const ENDPOINT = 'https://forms.waxeye.co.nz/f/CLIENT_SLUG';
+
+    document.getElementById('waxeye-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = document.getElementById('status');
+      const form = event.currentTarget;
+      const data = Object.fromEntries(new FormData(form).entries());
+
+      status.textContent = 'Sending…';
+
+      try {
+        const response = await fetch(ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        const result = await response.json();
+
+        if (response.ok && result.ok) {
+          status.textContent = 'Thanks — your message has been sent.';
+          form.reset();
+        } else {
+          status.textContent = `Sorry, something went wrong (${result.error || response.status}).`;
+        }
+      } catch {
+        status.textContent = 'Sorry, something went wrong. Please try again.';
+      }
+    });
+  </script>
+</body>
+</html>

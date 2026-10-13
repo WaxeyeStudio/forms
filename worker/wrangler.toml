@@ -1,11 +1,23 @@
 name = "waxeye-forms"
-main = "src/index.ts"
-compatibility_date = "2024-09-01"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = false
 
-# Route pattern for form submissions
+# Form submissions for client sites. Everything else on the hostname
+# (EspoCRM UI, /api/v1) passes through to the Forge origin.
 routes = [
     { pattern = "forms.waxeye.co.nz/f/*", zone_name = "waxeye.co.nz" }
 ]
 
-[env.production]
+[vars]
 ESPOCRM_API_URL = "https://forms.waxeye.co.nz/api/v1"
+ESPOCRM_ENTITY = "Lead"
+ESPOCRM_SOURCE = "Web Site"
+# Comma-separated origin allowlist, or "*" to accept form posts from any site.
+ALLOWED_ORIGINS = "*"
+# ESPOCRM_CLIENT_FIELD = "cClient"  # optional custom EspoCRM field for the client slug
+# REQUIRE_SECRET = "false"          # "true" requires X-Worker-Secret on every request
+
+# Secrets (set with `wrangler secret put <NAME>`):
+#   ESPOCRM_API_KEY    EspoCRM API user key — required for submissions to reach the CRM
+#   WORKER_API_SECRET  optional shared secret for server-to-server callers

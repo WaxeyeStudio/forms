@@ -1,0 +1,5 @@
+# Copy to .dev.vars for local development (`wrangler dev`).
+# Never commit .dev.vars.
+
+ESPOCRM_API_KEY=change_me
+# WORKER_API_SECRET=change_me

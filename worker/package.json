@@ -2,12 +2,14 @@
   "name": "waxeye-forms-worker",
   "version": "1.0.0",
   "private": true,
-  "description": "Cloudflare Worker for Waxeye form submissions",
-  "main": "src/index.ts",
+  "description": "Cloudflare Worker: form submissions for forms.waxeye.co.nz/f/{client}",
+  "main": "src/index.js",
+  "type": "module",
   "scripts": {
+    "deploy": "bash deploy.sh",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240909.0",
