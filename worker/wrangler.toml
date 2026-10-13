@@ -1,0 +1,11 @@
+name = "waxeye-forms"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+
+# Route pattern for form submissions
+routes = [
+    { pattern = "forms.waxeye.co.nz/f/*", zone_name = "waxeye.co.nz" }
+]
+
+[env.production]
+ESPOCRM_API_URL = "https://forms.waxeye.co.nz/api/v1"

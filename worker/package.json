@@ -1,0 +1,17 @@
+{
+  "name": "waxeye-forms-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker for Waxeye form submissions",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^3.78.0"
+  }
+}

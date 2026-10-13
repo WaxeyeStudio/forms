@@ -1,0 +1,37 @@
+/* Waxeye Branding - EspoCRM Custom Styles */
+
+/* Override header branding */
+.header-logo {
+    content: url('/custom/EspoCRM/CustomExtensions/WaxeyeBranding/assets/logo.png');
+    height: 40px !important;
+}
+
+/* Waxeye brand colors */
+:root {
+    --waxeye-primary: #1a1a2e;
+    --waxeye-secondary: #16213e;
+    --waxeye-accent: #0f3460;
+    --waxeye-highlight: #e94560;
+}
+
+/* Login page branding */
+.login-logo {
+    content: url('/custom/EspoCRM/CustomExtensions/WaxeyeBranding/assets/logo.png') !important;
+}
+
+/* Navigation bar */
+.navbar-inverse {
+    background-color: var(--waxeye-primary) !important;
+    border-color: var(--waxeye-secondary) !important;
+}
+
+/* Primary buttons */
+.btn-primary {
+    background-color: var(--waxeye-accent) !important;
+    border-color: var(--waxeye-accent) !important;
+}
+
+.btn-primary:hover {
+    background-color: var(--waxeye-highlight) !important;
+    border-color: var(--waxeye-highlight) !important;
+}
